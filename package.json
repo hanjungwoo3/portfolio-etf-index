@@ -1,0 +1,13 @@
+{
+  "name": "portfolio-etf-index",
+  "version": "1.0.0",
+  "description": "한국 ETF 구성종목 역색인 — 매일 1회 크롤링·JSON 빌드",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "crawl": "node scripts/crawl.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

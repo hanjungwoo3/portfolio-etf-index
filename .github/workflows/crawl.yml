@@ -1,0 +1,43 @@
+name: Daily ETF Index Crawl
+
+on:
+  schedule:
+    # 매일 21:00 UTC = 다음날 06:00 KST (장 시작 전)
+    - cron: "0 21 * * *"
+  workflow_dispatch:        # 수동 트리거 허용
+
+permissions:
+  contents: write           # data/*.json 커밋·푸시
+
+concurrency:
+  group: crawl
+  cancel-in-progress: true
+
+jobs:
+  crawl:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Run crawler
+        run: node scripts/crawl.js
+        env:
+          CONCURRENCY: "6"
+
+      - name: Commit if changed
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/
+          if git diff --staged --quiet; then
+            echo "no changes"
+          else
+            git commit -m "chore: daily ETF index update ($(date -u +%Y-%m-%d))"
+            git push
+          fi
