@@ -22,6 +22,11 @@ const UA =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) " +
   "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36";
 
+// 색인 대상 종목코드 — 국내 6자리 OR 해외 토스코드(US/NAS/NYS/AMX...).
+//   선물·현금성·"그 외"(stockCode=null)·"기타" 등은 제외.
+const isIndexableCode = (c) =>
+  typeof c === "string" && (/^\d{6}$/.test(c) || /^(US|NAS|NSQ|NYS|AMX|AMS)\w+$/.test(c));
+
 const CONCURRENCY = Number(process.env.CONCURRENCY ?? "6");
 const MAX_ETFS = process.env.MAX_ETFS ? Number(process.env.MAX_ETFS) : Infinity;
 const REQUEST_TIMEOUT_MS = 15_000;
@@ -81,7 +86,7 @@ async function fetchCompositions(code) {
   return items
     .map((it) => ({
       stockCode: typeof it.stockCode === "string"
-        ? it.stockCode.replace(/^A/, "")
+        ? it.stockCode.replace(/^A(?=\d{6}$)/, "")   // 국내 A005930→005930, 해외 US.../NAS...는 보존
         : "",
       name: String(it.name ?? "").trim(),
       ratio: typeof it.ratio === "number" ? it.ratio : 0,
@@ -143,7 +148,7 @@ async function main() {
   const stockIndex = {};
   for (const [etfCode, items] of Object.entries(compositions)) {
     for (const it of items) {
-      if (!/^\d{6}$/.test(it.stockCode)) continue;   // 선물·현금성·"기타" 제외
+      if (!isIndexableCode(it.stockCode)) continue;   // 선물·현금성·"기타"(null) 제외, 해외 토스코드는 포함
       (stockIndex[it.stockCode] ??= []).push([etfCode, it.ratio]);
     }
   }
@@ -154,7 +159,7 @@ async function main() {
   const compactCompositions = {};
   for (const [code, items] of Object.entries(compositions)) {
     compactCompositions[code] = items
-      .filter((it) => /^\d{6}$/.test(it.stockCode))
+      .filter((it) => isIndexableCode(it.stockCode))
       .map((it) => [it.stockCode, it.name, it.ratio]);
   }
 
