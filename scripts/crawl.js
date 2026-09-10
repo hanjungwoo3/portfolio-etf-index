@@ -20,6 +20,13 @@ const DATA_DIR = path.resolve(__dirname, "..", "data");
 const NAVER_ETF_LIST = "https://finance.naver.com/api/sise/etfItemList.nhn?etfType=0";
 const TOSS_COMPOSITIONS = (code) =>
   `https://wts-info-api.tossinvest.com/api/v2/stock-infos/A${code}/compositions`;
+const TOSS_CANDLES = (code) =>
+  `https://wts-info-api.tossinvest.com/api/v1/c-chart/kr-s/A${code}/day:1?count=${CANDLE_COUNT}`;
+// 기간 수익률용 일봉 개수. 3개월(약 63 거래일)을 덮으려면 70이면 넉넉하다.
+const CANDLE_COUNT = 70;
+// 기간 → 거래일 수. 달력일이 아니라 거래일로 센다(휴장 때문에 달력일은 들쭉날쭉하다).
+const RETURN_PERIODS = { w1: 5, m1: 21, m3: 63 };
+
 const NAVER_THEME_LIST = (page) => `https://finance.naver.com/sise/theme.naver?page=${page}`;
 const NAVER_THEME_DETAIL = (no) =>
   `https://finance.naver.com/sise/sise_group_detail.naver?type=theme&no=${no}`;
@@ -178,6 +185,37 @@ async function fetchCompositions(code) {
     .filter((it) => it.name);
 }
 
+// ─── 2-b) 기간 수익률 ────────────────────────────────────────────
+// 1주·1개월·3개월 수익률은 과거 시세가 필요해서 ETF 당 1콜이다(1,100콜 이상).
+//   프론트에서는 불가능한 비용이라 여기서 하루 1회 계산해 심어 둔다 → 프론트는 0콜.
+//   '오늘' 등락률만 프론트가 실시간으로 구한다(그건 이미 6콜짜리 배치가 있다).
+async function fetchReturns(code) {
+  const resp = await fetchWithTimeout(TOSS_CANDLES(code), {
+    headers: {
+      "User-Agent": UA,
+      "Origin": "https://tossinvest.com",
+      "Referer": "https://tossinvest.com/",
+      "Accept": "application/json",
+    },
+  });
+  if (!resp.ok) return null;
+  const data = await resp.json();
+  // 최신이 앞이다(내림차순). close 가 없는 봉은 버린다.
+  const closes = (data?.result?.candles ?? [])
+    .map((c) => (typeof c.close === "number" ? c.close : 0))
+    .filter((v) => v > 0);
+  if (closes.length < 2) return null;
+  const latest = closes[0];
+  const out = {};
+  for (const [key, back] of Object.entries(RETURN_PERIODS)) {
+    // 이력이 짧으면(신규 상장) 그 기간은 건너뛴다 — 있는 것만 보여준다.
+    if (closes.length <= back) continue;
+    const past = closes[back];
+    if (past > 0) out[key] = Math.round(((latest / past - 1) * 100) * 100) / 100;
+  }
+  return Object.keys(out).length > 0 ? out : null;
+}
+
 // ─── 동시성 제어된 map ────────────────────────────────────────────
 async function pmap(items, fn, concurrency) {
   const out = new Array(items.length);
@@ -209,21 +247,27 @@ async function main() {
   const targets = list.slice(0, Math.min(list.length, MAX_ETFS));
   console.log(`[3/4] 토스 구성종목 fetch (동시 ${CONCURRENCY}, 대상 ${targets.length})...`);
 
-  let okCount = 0, failCount = 0;
+  let okCount = 0, failCount = 0, retCount = 0;
   const compositions = {};  // { etfCode: [{stockCode, name, ratio}, ...] }
+  const returns = {};       // { etfCode: {w1, m1, m3} }
   const startedAt = Date.now();
 
   await pmap(targets, async (etf, i) => {
-    const items = await fetchCompositions(etf.code);
+    // 구성종목과 일봉은 서로 독립이다 — 한쪽이 실패해도 다른 쪽은 남긴다.
+    const [items, ret] = await Promise.all([
+      fetchCompositions(etf.code).catch(() => null),
+      fetchReturns(etf.code).catch(() => null),
+    ]);
+    if (ret) { returns[etf.code] = ret; retCount++; }
     if (items && items.length > 0) {
       compositions[etf.code] = items;
       okCount++;
     } else {
       failCount++;
     }
-    if ((i + 1) % 50 === 0 || i + 1 === targets.length) {
+    if ((i + 1) % 100 === 0 || i + 1 === targets.length) {
       const elapsed = ((Date.now() - startedAt) / 1000).toFixed(1);
-      console.log(`  ${i + 1}/${targets.length} (성공 ${okCount}, 실패 ${failCount}, ${elapsed}s)`);
+      console.log(`  ${i + 1}/${targets.length} (구성 ${okCount}/실패 ${failCount}, 수익률 ${retCount}, ${elapsed}s)`);
     }
   }, CONCURRENCY);
 
@@ -259,6 +303,7 @@ async function main() {
     builtAt: new Date().toISOString(),
     etfCount: Object.keys(etfList).length,
     stockCount: Object.keys(stockIndex).length,
+    returnCount: Object.keys(returns).length,
     themeCardCount: Object.keys(theme.cards).length,
     themeStockCount: Object.keys(theme.names).length,
     themeMinCap: theme.minCap,
@@ -278,6 +323,12 @@ async function main() {
     path.join(DATA_DIR, "etf-compositions.json"),
     JSON.stringify({ meta, compositions: compactCompositions }, null, 0) + "\n",
   );
+  // etf-returns.json — ETF랭킹 탭의 기간(1주·1개월·3개월) 전용.
+  //   '오늘' 은 프론트가 실시간으로 구하므로 여기 없다.
+  await fs.writeFile(
+    path.join(DATA_DIR, "etf-returns.json"),
+    JSON.stringify({ meta, returns }, null, 0) + "\n",
+  );
   // theme-cards.json — 지수 탭 전용. ETF 색인과 쓰임이 달라 파일을 나눠 둔다
   //   (ETF 색인은 어디서나 읽히고, 이건 지수 탭에서만 받는다).
   await fs.writeFile(
@@ -287,9 +338,10 @@ async function main() {
 
   console.log("\n=== 완료 ===");
   console.log(`  ETF: ${meta.etfCount}, 종목: ${meta.stockCount}`);
+  console.log(`  기간 수익률: ${meta.returnCount}종`);
   console.log(`  테마 카드: ${meta.themeCardCount}, 테마 종목: ${meta.themeStockCount}`);
   console.log(`  성공: ${okCount}, 실패: ${failCount}`);
-  console.log("  파일: data/etf-list.json, data/etf-index.json, data/etf-compositions.json, data/theme-cards.json");
+  console.log("  파일: data/etf-list.json, data/etf-index.json, data/etf-compositions.json, data/etf-returns.json, data/theme-cards.json");
 }
 
 main().catch((e) => {
