@@ -39,6 +39,7 @@ const THEME_PAGES = 7;   // 266개 테마가 7쪽에 나뉘어 있다
 const KRX_NOTICE_LIST = "https://data.krx.co.kr/contents/MDC/COMS/board/MDCCOMS010_S1D1.cmd";
 const KRX_NOTICE_REFERER =
   "https://data.krx.co.kr/contents/MDC/COMS/board/MDCCOMS010_S1.cmd?boardId=MDCINFO005";
+const KRX_NOTICE_DETAIL = "https://data.krx.co.kr/contents/MDC/COMS/board/MDCCOMS010_S2D1.cmd";
 const KRX_NOTICE_URL = (seq) =>
   "https://data.krx.co.kr/contents/MDC/COMS/board/MDCCOMS010_S2.cmd"
   + `?boardId=MDCINFO005&cmBbsId=MKD01040000&bbsSeq=${seq}`;
@@ -212,9 +213,42 @@ async function fetchKrxNotices() {
     seen.add(seq);
     out.push({ seq, title, date: String(r.REG_DT ?? "").trim(), url: KRX_NOTICE_URL(seq) });
   }
+  // 본문도 받아 둔다 — 앱에서 팝업으로 보여주려면 필요하다.
+  //   프론트가 직접 부르면 CORS 때문에 프록시를 타야 하는데, data.krx.co.kr 은 워커
+  //   화이트리스트에 없어서 개인 워커까지 전부 갱신해야 한다. 여기서 받으면 그럴 일이 없다.
+  for (const n of out) {
+    n.body = await fetchKrxNoticeBody(n.seq).catch(() => "");
+  }
   // 최신순 — 고정 공지가 위로 끼어들어 날짜 순서가 흐트러져 있다.
   out.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
   return out;
+}
+
+// 공지 본문 — HTML 태그를 걷어내고 줄바꿈만 남긴다. 원문 링크는 그대로 두므로
+//   여기서는 읽을 수 있으면 충분하다.
+async function fetchKrxNoticeBody(seq) {
+  const resp = await fetchWithTimeout(KRX_NOTICE_DETAIL, {
+    method: "POST",
+    headers: {
+      "User-Agent": UA,
+      "Referer": KRX_NOTICE_REFERER,
+      "X-Requested-With": "XMLHttpRequest",
+      "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+    },
+    body: new URLSearchParams({
+      boardId: "MDCINFO005", cmBbsId: "MKD01040000", bbsSeq: seq,
+    }).toString(),
+  });
+  if (!resp.ok) return "";
+  const html = (await resp.json())?.output?.MAINDOC_CONTN ?? "";
+  return String(html)
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/(p|div|li|tr)>/gi, "\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+    .split("\n").map(l => l.trim()).filter(Boolean).join("\n")
+    .slice(0, 4000);   // 아주 긴 공지는 잘라 둔다 — 원문 링크가 있다
 }
 
 // ─── 2) 토스 구성종목 ────────────────────────────────────────────
