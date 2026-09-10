@@ -31,6 +31,19 @@ const NAVER_THEME_LIST = (page) => `https://finance.naver.com/sise/theme.naver?p
 const NAVER_THEME_DETAIL = (no) =>
   `https://finance.naver.com/sise/sise_group_detail.naver?type=theme&no=${no}`;
 const THEME_PAGES = 7;   // 266개 테마가 7쪽에 나뉘어 있다
+// KRX 주가지수 공지 — 지수 정기변경(CAP Factor·섹터지수 구성종목 등) 안내가 여기 올라온다.
+//   예: "26년 9월 CAP Factor 정기변경" → 종목당 20% 상한을 넘은 비중을 덜어내는 리밸런싱.
+//       실제로 2026-09-10 에 SK하이닉스 1.2조·삼성전자 0.2조 매도 수요가 나왔다.
+//   ★ data.krx.co.kr 의 getJsonData.cmd 는 로그인이 필요하지만, 이 게시판 엔드포인트는
+//     세션 없이 된다(실측). 파라미터 이름이 특이하다 — curPage/condTp/titleContn.
+const KRX_NOTICE_LIST = "https://data.krx.co.kr/contents/MDC/COMS/board/MDCCOMS010_S1D1.cmd";
+const KRX_NOTICE_REFERER =
+  "https://data.krx.co.kr/contents/MDC/COMS/board/MDCCOMS010_S1.cmd?boardId=MDCINFO005";
+const KRX_NOTICE_URL = (seq) =>
+  "https://data.krx.co.kr/contents/MDC/COMS/board/MDCCOMS010_S2.cmd"
+  + `?boardId=MDCINFO005&cmBbsId=MKD01040000&bbsSeq=${seq}`;
+const KRX_NOTICE_KEEP = 30;   // 최근 30건이면 반년치는 덮는다
+
 const NAVER_MARKET_VALUE = (market, page) =>
   `https://m.stock.naver.com/api/stocks/marketValue/${market}?page=${page}&pageSize=100`;
 // 시가총액 하한(억원). 테마 종목의 절반이 1,300억 미만이라 안 거르면 잡주 몇 개가
@@ -161,6 +174,49 @@ async function fetchThemeCards() {
   return { cards, names, caps, themeCount: index.size, missing, dropped, minCap: MIN_CAP };
 }
 
+// ─── 1-e) KRX 주가지수 공지 ──────────────────────────────────────
+// 제목·날짜·링크만 담는다. 본문/첨부는 형식이 정형화돼 있지 않아 파싱 품질을 장담 못 한다 —
+//   원문으로 보내는 편이 정직하다.
+async function fetchKrxNotices() {
+  const today = new Date();
+  const from = new Date(today.getTime() - 400 * 86400_000);   // 넉넉히 400일
+  const ymd = (d) => d.toISOString().slice(0, 10).replace(/-/g, "");
+  const body = new URLSearchParams({
+    curPage: "1",
+    pageSize: String(KRX_NOTICE_KEEP),
+    mktId: "",
+    condTp: "2",
+    titleContn: "",
+    strtDd: ymd(from),
+    endDd: ymd(today),
+    boardId: "MDCINFO005",
+  });
+  const resp = await fetchWithTimeout(KRX_NOTICE_LIST, {
+    method: "POST",
+    headers: {
+      "User-Agent": UA,
+      "Referer": KRX_NOTICE_REFERER,
+      "X-Requested-With": "XMLHttpRequest",
+      "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+    },
+    body: body.toString(),
+  });
+  if (!resp.ok) return [];
+  const rows = (await resp.json())?.output?.OutBlock_1 ?? [];
+  const seen = new Set();
+  const out = [];
+  for (const r of rows) {
+    const seq = String(r.BBS_SEQ ?? "").trim();
+    const title = String(r.TITLE ?? "").trim();
+    if (!seq || !title || seen.has(seq)) continue;   // 상단 고정 공지가 목록에 두 번 나온다
+    seen.add(seq);
+    out.push({ seq, title, date: String(r.REG_DT ?? "").trim(), url: KRX_NOTICE_URL(seq) });
+  }
+  // 최신순 — 고정 공지가 위로 끼어들어 날짜 순서가 흐트러져 있다.
+  out.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+  return out;
+}
+
 // ─── 2) 토스 구성종목 ────────────────────────────────────────────
 async function fetchCompositions(code) {
   const resp = await fetchWithTimeout(TOSS_COMPOSITIONS(code), {
@@ -237,7 +293,9 @@ async function main() {
   const list = await fetchEtfList();
   console.log(`  → ${list.length} 개 ETF`);
 
-  console.log("[2/4] 네이버 테마 카드 fetch...");
+  console.log("[2/4] 네이버 테마 카드 + KRX 공지 fetch...");
+  const notices = await fetchKrxNotices().catch(() => []);
+  console.log(`  → KRX 주가지수 공지 ${notices.length}건`);
   const theme = await fetchThemeCards();
   // 네이버가 테마 이름을 바꾸면 그 카드가 조용히 작아진다 — 로그로 드러나게 한다.
   if (theme.missing.length > 0) console.warn(`  ⚠ 못 찾은 테마: ${theme.missing.join(", ")}`);
@@ -307,6 +365,7 @@ async function main() {
     themeCardCount: Object.keys(theme.cards).length,
     themeStockCount: Object.keys(theme.names).length,
     themeMinCap: theme.minCap,
+    noticeCount: notices.length,
     okCount, failCount,
   };
 
@@ -329,6 +388,11 @@ async function main() {
     path.join(DATA_DIR, "etf-returns.json"),
     JSON.stringify({ meta, returns }, null, 0) + "\n",
   );
+  // krx-notices.json — 지수 정기변경 공지. 제목·링크만이라 몇 KB 다.
+  await fs.writeFile(
+    path.join(DATA_DIR, "krx-notices.json"),
+    JSON.stringify({ meta, notices }, null, 0) + "\n",
+  );
   // theme-cards.json — 지수 탭 전용. ETF 색인과 쓰임이 달라 파일을 나눠 둔다
   //   (ETF 색인은 어디서나 읽히고, 이건 지수 탭에서만 받는다).
   await fs.writeFile(
@@ -339,9 +403,11 @@ async function main() {
   console.log("\n=== 완료 ===");
   console.log(`  ETF: ${meta.etfCount}, 종목: ${meta.stockCount}`);
   console.log(`  기간 수익률: ${meta.returnCount}종`);
+  console.log(`  KRX 공지: ${meta.noticeCount}건`);
   console.log(`  테마 카드: ${meta.themeCardCount}, 테마 종목: ${meta.themeStockCount}`);
   console.log(`  성공: ${okCount}, 실패: ${failCount}`);
-  console.log("  파일: data/etf-list.json, data/etf-index.json, data/etf-compositions.json, data/etf-returns.json, data/theme-cards.json");
+  console.log("  파일: data/etf-list.json, data/etf-index.json, data/etf-compositions.json, data/etf-returns.json,");
+  console.log("        data/krx-notices.json, data/theme-cards.json");
 }
 
 main().catch((e) => {
