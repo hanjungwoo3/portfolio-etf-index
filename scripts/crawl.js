@@ -27,10 +27,14 @@ const CANDLE_COUNT = 70;
 // 기간 → 거래일 수. 달력일이 아니라 거래일로 센다(휴장 때문에 달력일은 들쭉날쭉하다).
 const RETURN_PERIODS = { w1: 5, m1: 21, m3: 63 };
 
-const NAVER_THEME_LIST = (page) => `https://finance.naver.com/sise/theme.naver?page=${page}`;
+// ★ 2026-09-12: finance.naver.com/sise/theme.naver 와 sise_group_detail 이 모두
+//   stock.naver.com 새 사이트로 302 된다. 따라가면 Next.js SPA 껍데기라 테마가 0건이 된다.
+//   → m.stock JSON 으로 갈아탔다. 목록·상세가 같은 계열이고 EUC-KR 디코드도 필요 없다.
+const NAVER_THEME_LIST = (page) =>
+  `https://m.stock.naver.com/api/stocks/theme?page=${page}&pageSize=100`;
 const NAVER_THEME_DETAIL = (no) =>
-  `https://finance.naver.com/sise/sise_group_detail.naver?type=theme&no=${no}`;
-const THEME_PAGES = 7;   // 266개 테마가 7쪽에 나뉘어 있다
+  `https://m.stock.naver.com/api/stocks/theme/${no}?pageSize=100`;
+const THEME_PAGES = 5;   // 266개 테마 → 100개씩 3쪽. totalCount 로 끊고 여유만 둔다
 // KRX 주가지수 공지 — 지수 정기변경(CAP Factor·섹터지수 구성종목 등) 안내가 여기 올라온다.
 //   예: "26년 9월 CAP Factor 정기변경" → 종목당 20% 상한을 넘은 비중을 덜어내는 리밸런싱.
 //       실제로 2026-09-10 에 SK하이닉스 1.2조·삼성전자 0.2조 매도 수요가 나왔다.
@@ -94,6 +98,20 @@ async function fetchNaverEucKr(url) {
   return new TextDecoder("euc-kr").decode(await resp.arrayBuffer());
 }
 
+// m.stock API 는 UTF-8 JSON 이다 — EUC-KR 디코드가 필요 없다.
+async function fetchNaverJson(url) {
+  const resp = await fetchWithTimeout(url, {
+    headers: {
+      "User-Agent": UA,
+      "Referer": "https://m.stock.naver.com/",
+      "Accept": "application/json",
+      "Accept-Language": "ko-KR,ko;q=0.9",
+    },
+  });
+  if (!resp.ok) throw new Error(`Naver HTTP ${resp.status} — ${url}`);
+  return resp.json();
+}
+
 // ─── 1) 네이버 ETF 목록 ──────────────────────────────────────────
 async function fetchEtfList() {
   const json = JSON.parse(await fetchNaverEucKr(NAVER_ETF_LIST));
@@ -124,8 +142,14 @@ async function fetchEtfList() {
 async function fetchThemeCards() {
   const index = new Map();          // 테마 이름 → no
   for (let page = 1; page <= THEME_PAGES; page++) {
-    const html = await fetchNaverEucKr(NAVER_THEME_LIST(page));
-    for (const m of html.matchAll(/no=(\d+)">([^<]+)</g)) index.set(m[2].trim(), m[1]);
+    const json = await fetchNaverJson(NAVER_THEME_LIST(page));
+    const groups = json?.groups ?? [];
+    if (groups.length === 0) break;
+    for (const g of groups) {
+      const name = String(g?.name ?? "").trim();
+      if (name && g?.no != null) index.set(name, String(g.no));
+    }
+    if (index.size >= (json?.totalCount ?? 0)) break;
   }
   // 시가총액 — 코스피·코스닥 전 종목(약 3,800종, 100종/쪽). 잡주를 걷어내는 기준이다.
   const cap = new Map();            // 종목코드 → 시총(억원)
@@ -149,9 +173,10 @@ async function fetchThemeCards() {
   for (const theme of [...new Set(Object.values(THEME_CARDS).flat())]) {
     const no = index.get(theme);
     if (!no) { missing.push(theme); continue; }
-    const html = await fetchNaverEucKr(NAVER_THEME_DETAIL(no));
-    members.set(theme, [...html.matchAll(/code=([0-9A-Za-z]{6})">([^<]+)</g)]
-      .map((m) => [m[1], m[2].trim()]));
+    const json = await fetchNaverJson(NAVER_THEME_DETAIL(no));
+    members.set(theme, (json?.stocks ?? [])
+      .map((st) => [String(st?.itemCode ?? "").trim(), String(st?.stockName ?? "").trim()])
+      .filter(([code, name]) => /^[0-9A-Za-z]{6}$/.test(code) && name));
   }
   // 카드 = 테마 합집합. 종목명은 카드마다 중복 저장하지 않고 한 곳에 모은다(파일 크기).
   const names = {};
