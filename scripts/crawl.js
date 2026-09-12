@@ -35,6 +35,20 @@ const NAVER_THEME_LIST = (page) =>
 const NAVER_THEME_DETAIL = (no) =>
   `https://m.stock.naver.com/api/stocks/theme/${no}?pageSize=100`;
 const THEME_PAGES = 5;   // 266개 테마 → 100개씩 3쪽. totalCount 로 끊고 여유만 둔다
+
+// ─── 업종·테마 '분류' 그대로 가져오기 ───────────────────────────
+//   THEME_CARDS 는 우리가 손으로 고른 38개다. 그것과 별개로 네이버 전체 분류
+//   (업종 79 · 테마 266)를 통째로 담아, 앱이 같은 계산(시총 하한 + 중앙값 + 프리·애프터)을
+//   그 분류에도 적용할 수 있게 한다. 네이버가 계산해 둔 등락률은 쓰지 않는다 —
+//   계산 기준이 공개돼 있지 않고 잡주 필터도 없어서 우리 카드와 숫자가 섞이면 안 된다.
+//
+//   ★ stocklist 는 pageSize=200 까지 받고(300 은 400) **marketSum 을 같이 준다**.
+//     그래서 시총을 따로 긁을 필요가 없다 — 한 업종/테마당 1콜이면 끝난다.
+const NAVER_INDUSTRY_LIST =
+  "https://stock.naver.com/api/stockSecurity/rankings/v2/domestic/industries?sortType=changeRate&size=100&period=daily";
+const NAVER_GROUP_STOCKS = (kind, id) =>
+  `https://stock.naver.com/api/domestic/market/${kind}/${id}/stocklist`
+  + "?marketType=ALL&orderType=priceTop&startIdx=0&pageSize=200";
 // KRX 주가지수 공지 — 지수 정기변경(CAP Factor·섹터지수 구성종목 등) 안내가 여기 올라온다.
 //   예: "26년 9월 CAP Factor 정기변경" → 종목당 20% 상한을 넘은 비중을 덜어내는 리밸런싱.
 //       실제로 2026-09-10 에 SK하이닉스 1.2조·삼성전자 0.2조 매도 수요가 나왔다.
@@ -200,6 +214,61 @@ async function fetchThemeCards() {
   return { cards, names, caps, themeCount: index.size, missing, dropped, minCap: MIN_CAP };
 }
 
+// ─── 1-d) 업종·테마 분류(구성종목) ───────────────────────────────
+async function fetchGroupMembers() {
+  const names = {};   // 종목코드 → 이름
+  const caps = {};    // 종목코드 → 시총(억원)
+
+  const collect = async (kind, id, label) => {
+    const rows = await fetchNaverJson(NAVER_GROUP_STOCKS(kind, id)).catch(() => []);
+    const codes = [];
+    for (const r of Array.isArray(rows) ? rows : []) {
+      const code = String(r?.itemcode ?? "").trim();
+      const name = String(r?.itemname ?? "").trim();
+      if (!/^[0-9A-Za-z]{6}$/.test(code) || !name) continue;
+      // marketSum 은 원 단위 → 억원. 잡주는 여기서 걸러 카드가 한 종목에 휘둘리지 않게 한다.
+      const cap = Math.round(Number(r?.marketSum ?? 0) / 1e8);
+      if (!Number.isFinite(cap) || cap < MIN_CAP) continue;
+      codes.push(code);
+      names[code] = name;
+      caps[code] = cap;
+    }
+    return { id: String(id), name: label, codes };
+  };
+
+  // 업종 — 목록 1콜로 코드·이름을 얻고, 각 업종마다 구성종목 1콜.
+  const indList = await fetchNaverJson(NAVER_INDUSTRY_LIST).catch(() => ({}));
+  const indItems = (indList?.items ?? [])
+    .map((x) => ({ id: String(x?.code ?? ""), name: String(x?.name ?? "").trim() }))
+    .filter((x) => x.id && x.name);
+  const industries = [];
+  for (const x of indItems) {
+    const g = await collect("upjong", x.id, x.name);
+    if (g.codes.length >= 3) industries.push(g);   // 표본 3 미만은 중앙값이 무의미
+  }
+
+  // 테마 — 목록은 fetchThemeCards 와 같은 경로지만 여기서 따로 읽는다(의존 방향을 단순하게).
+  const themeIndex = [];
+  for (let page = 1; page <= THEME_PAGES; page++) {
+    const json = await fetchNaverJson(NAVER_THEME_LIST(page)).catch(() => ({}));
+    const groups = json?.groups ?? [];
+    if (groups.length === 0) break;
+    for (const g of groups) {
+      const id = String(g?.no ?? "");
+      const name = String(g?.name ?? "").trim();
+      if (id && name && !themeIndex.some((t) => t.id === id)) themeIndex.push({ id, name });
+    }
+    if (themeIndex.length >= (json?.totalCount ?? 0)) break;
+  }
+  const themes = [];
+  for (const x of themeIndex) {
+    const g = await collect("theme", x.id, x.name);
+    if (g.codes.length >= 3) themes.push(g);
+  }
+
+  return { industries, themes, names, caps, minCap: MIN_CAP };
+}
+
 // ─── 1-e) KRX 주가지수 공지 ──────────────────────────────────────
 // 제목·날짜·링크만 담는다. 본문/첨부는 형식이 정형화돼 있지 않아 파싱 품질을 장담 못 한다 —
 //   원문으로 보내는 편이 정직하다.
@@ -356,6 +425,12 @@ async function main() {
   const notices = await fetchKrxNotices().catch(() => []);
   console.log(`  → KRX 주가지수 공지 ${notices.length}건`);
   const theme = await fetchThemeCards();
+  const groups = await fetchGroupMembers().catch((e) => {
+    console.warn(`  ⚠ 업종·테마 분류 수집 실패: ${e.message}`);
+    return { industries: [], themes: [], names: {}, caps: {}, minCap: MIN_CAP };
+  });
+  console.log(`  → 업종 ${groups.industries.length}개 · 테마 ${groups.themes.length}개`
+            + ` · 종목 ${Object.keys(groups.names).length}종(시총 ${MIN_CAP}억 이상)`);
   // 네이버가 테마 이름을 바꾸면 그 카드가 조용히 작아진다 — 로그로 드러나게 한다.
   if (theme.missing.length > 0) console.warn(`  ⚠ 못 찾은 테마: ${theme.missing.join(", ")}`);
   console.log(`  → 카드 ${Object.keys(theme.cards).length}개, 종목 ${Object.keys(theme.names).length}종`
@@ -459,6 +534,20 @@ async function main() {
     JSON.stringify({ meta, cards: theme.cards, names: theme.names, caps: theme.caps }, null, 0) + "\n",
   );
 
+  // group-members.json — 네이버 업종·테마 '분류' 원본. 등락률은 앱이 직접 계산한다.
+  await fs.writeFile(
+    path.join(DATA_DIR, "group-members.json"),
+    JSON.stringify({
+      meta: {
+        version: meta.version, builtAt: meta.builtAt, minCap: groups.minCap,
+        industryCount: groups.industries.length, themeCount: groups.themes.length,
+        stockCount: Object.keys(groups.names).length,
+      },
+      industries: groups.industries, themes: groups.themes,
+      names: groups.names, caps: groups.caps,
+    }, null, 0) + "\n",
+  );
+
   console.log("\n=== 완료 ===");
   console.log(`  ETF: ${meta.etfCount}, 종목: ${meta.stockCount}`);
   console.log(`  기간 수익률: ${meta.returnCount}종`);
@@ -466,7 +555,8 @@ async function main() {
   console.log(`  테마 카드: ${meta.themeCardCount}, 테마 종목: ${meta.themeStockCount}`);
   console.log(`  성공: ${okCount}, 실패: ${failCount}`);
   console.log("  파일: data/etf-list.json, data/etf-index.json, data/etf-compositions.json, data/etf-returns.json,");
-  console.log("        data/krx-notices.json, data/theme-cards.json");
+  console.log(`  업종·테마 분류: 업종 ${groups.industries.length} · 테마 ${groups.themes.length}`);
+  console.log("        data/krx-notices.json, data/theme-cards.json, data/group-members.json");
 }
 
 main().catch((e) => {
