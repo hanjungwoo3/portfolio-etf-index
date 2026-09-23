@@ -22,10 +22,12 @@ const TOSS_COMPOSITIONS = (code) =>
   `https://wts-info-api.tossinvest.com/api/v2/stock-infos/A${code}/compositions`;
 const TOSS_CANDLES = (code) =>
   `https://wts-info-api.tossinvest.com/api/v1/c-chart/kr-s/A${code}/day:1?count=${CANDLE_COUNT}`;
-// 기간 수익률용 일봉 개수. 3개월(약 63 거래일)을 덮으려면 70이면 넉넉하다.
-const CANDLE_COUNT = 70;
+// 기간 수익률용 일봉 개수. 1년(약 252 거래일)을 덮으려면 260이면 넉넉하다.
+//   토스 c-chart count 상한은 450 이라 여유가 있다. 콜 수는 그대로(ETF 당 1콜), 응답만 커진다.
+const CANDLE_COUNT = 260;
 // 기간 → 거래일 수. 달력일이 아니라 거래일로 센다(휴장 때문에 달력일은 들쭉날쭉하다).
-const RETURN_PERIODS = { w1: 5, m1: 21, m3: 63 };
+//   이력이 짧은 신규 상장 ETF 는 그 기간만 건너뛴다(fetchReturns 안에서 처리).
+const RETURN_PERIODS = { w1: 5, m1: 21, m3: 63, m6: 126, y1: 252 };
 
 // ★ 2026-09-12: finance.naver.com/sise/theme.naver 와 sise_group_detail 이 모두
 //   stock.naver.com 새 사이트로 302 된다. 따라가면 Next.js SPA 껍데기라 테마가 0건이 된다.
@@ -370,7 +372,7 @@ async function fetchCompositions(code) {
 }
 
 // ─── 2-b) 기간 수익률 ────────────────────────────────────────────
-// 1주·1개월·3개월 수익률은 과거 시세가 필요해서 ETF 당 1콜이다(1,100콜 이상).
+// 1주·1개월·3개월·6개월·1년 수익률은 과거 시세가 필요해서 ETF 당 1콜이다(1,100콜 이상).
 //   프론트에서는 불가능한 비용이라 여기서 하루 1회 계산해 심어 둔다 → 프론트는 0콜.
 //   '오늘' 등락률만 프론트가 실시간으로 구한다(그건 이미 6콜짜리 배치가 있다).
 async function fetchReturns(code) {
@@ -441,7 +443,7 @@ async function main() {
 
   let okCount = 0, failCount = 0, retCount = 0;
   const compositions = {};  // { etfCode: [{stockCode, name, ratio}, ...] }
-  const returns = {};       // { etfCode: {w1, m1, m3} }
+  const returns = {};       // { etfCode: {w1, m1, m3, m6, y1} }
   const startedAt = Date.now();
 
   await pmap(targets, async (etf, i) => {
@@ -516,7 +518,7 @@ async function main() {
     path.join(DATA_DIR, "etf-compositions.json"),
     JSON.stringify({ meta, compositions: compactCompositions }, null, 0) + "\n",
   );
-  // etf-returns.json — ETF랭킹 탭의 기간(1주·1개월·3개월) 전용.
+  // etf-returns.json — ETF랭킹 탭의 기간(1주·1개월·3개월·6개월·1년) 전용.
   //   '오늘' 은 프론트가 실시간으로 구하므로 여기 없다.
   await fs.writeFile(
     path.join(DATA_DIR, "etf-returns.json"),
