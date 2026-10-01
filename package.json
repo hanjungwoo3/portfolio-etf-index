@@ -5,7 +5,8 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "crawl": "node scripts/crawl.js"
+    "crawl": "node scripts/crawl.js",
+    "flows": "node scripts/flows.js"
   },
   "engines": {
     "node": ">=20"

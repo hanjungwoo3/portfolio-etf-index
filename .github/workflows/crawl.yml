@@ -30,6 +30,14 @@ jobs:
         env:
           CONCURRENCY: "6"
 
+      # 투자자별 매집 집계(portfolio-web '수급 매집' 탭) — 실패해도 ETF 색인 커밋은 막지 않는다.
+      #   실패하면 어제 investor-flows.json 이 그대로 남는다(스크립트가 부분 결과로 덮지 않는다).
+      - name: Investor flows
+        run: node scripts/flows.js
+        continue-on-error: true
+        env:
+          CONCURRENCY: "6"
+
       - name: Commit if changed
         run: |
           git config user.name  "github-actions[bot]"
