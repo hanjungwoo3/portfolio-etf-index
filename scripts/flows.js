@@ -11,6 +11,7 @@
 //
 // 실행: node scripts/flows.js   (환경변수 CONCURRENCY 기본 6, MAX_STOCKS 테스트용)
 //   결과: data/investor-flows.json
+//   종목마다: 5/20/60일 집계 · 연속 매수일 · 60일 시계열(종가·일별 순매수) · 외국인 지분율 · 네이버 업종
 
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -26,6 +27,11 @@ const NAVER_MARKET_VALUE = (market, page) =>
   `https://m.stock.naver.com/api/stocks/marketValue/${market}?page=${page}&pageSize=100`;
 const TOSS_TREND = (code) =>
   `https://wts-info-api.tossinvest.com/api/v1/stock-infos/trade/trend/trading-trend?productCode=A${code}&size=${DAYS}`;
+
+const NAVER_INDUSTRY_LIST =
+  "https://stock.naver.com/api/stockSecurity/rankings/v2/domestic/industries?sortType=changeRate&size=100&period=daily";
+const NAVER_INDUSTRY_STOCKS = (id, page) =>
+  `https://stock.naver.com/api/domestic/market/upjong/${id}/stocklist?marketType=ALL&orderType=priceTop&startIdx=${page}&pageSize=200`;
 
 const DAYS = 60;                  // 60일 창까지 — 토스 상한 200
 const WINDOWS = [5, 20, 60];
@@ -76,6 +82,26 @@ async function fetchUniverse() {
   return out;
 }
 
+// 종목코드 → 네이버 업종명. 업종 목록 1콜 + 업종마다 구성종목(200개씩 페이지).
+async function fetchIndustries() {
+  const map = {};
+  const list = await getJson(NAVER_INDUSTRY_LIST);
+  const items = (list?.items ?? []).map((x) => ({ id: String(x?.code ?? ""), name: String(x?.name ?? "").trim() }))
+    .filter((x) => x.id && x.name);
+  for (const it of items) {
+    for (let page = 0; page < 10; page++) {
+      const rows = await getJson(NAVER_INDUSTRY_STOCKS(it.id, page));
+      if (!Array.isArray(rows) || rows.length === 0) break;
+      for (const r of rows) {
+        const code = String(r?.itemcode ?? "").trim();
+        if (/^[0-9A-Za-z]{6}$/.test(code) && !map[code]) map[code] = it.name;
+      }
+      if (rows.length < 200) break;
+    }
+  }
+  return map;
+}
+
 // 한 종목 집계. 토스 수급은 최신 → 과거 순. 오늘 줄이 장중(inMarketTime)이면 버린다 —
 //   크롤러는 06:00 KST 에 돌아 보통 어제가 맨 위지만, 수동 실행이 장중일 수 있다.
 async function aggregate(st) {
@@ -105,10 +131,17 @@ async function aggregate(st) {
     };
   }
   const streak = (k) => { let c = 0; for (const d of day) { if (d[k] > 0) c++; else break; } return c; };
+  // 60일 미니 차트용 시계열 — **과거 → 최근** 순. 순매수는 0.1억(천만원) 정수로 줄여 파일 크기를 아낀다.
+  const asc = [...day].reverse();
+  const tenth = (v) => Math.round(v / 1e7);
+  const fr = rows.map((r) => Number(r.foreignerRatio)).filter((v) => Number.isFinite(v) && v > 0);
   return {
     code: st.code, name: st.name, market: st.market, capEok: st.capEok, close: last,
     date: rows[0].baseDate, w,
     streak: { fo: streak("fo"), in: streak("in"), pe: streak("pe") },
+    s: { c: asc.map((d) => d.close), fo: asc.map((d) => tenth(d.fo)), in: asc.map((d) => tenth(d.in)), pe: asc.map((d) => tenth(d.pe)) },
+    // 외국인 지분율 — 지금 / 60일 전 (같은 응답에 들어 있다)
+    fr: fr.length ? [fr[0], fr[fr.length - 1]] : null,
   };
 }
 
@@ -130,7 +163,13 @@ async function main() {
   const uni = (await fetchUniverse()).slice(0, MAX_STOCKS);
   console.log(`[flows] 대상 ${uni.length}종 (시총 ${MIN_CAP_EOK}억+ 보통주)`);
   if (uni.length < 100) throw new Error(`대상이 너무 적다 (${uni.length}) — 네이버 응답 확인`);
-  const res = (await pmap(uni, aggregate, CONCURRENCY)).filter(Boolean);
+  const [res0, industry] = await Promise.all([
+    pmap(uni, aggregate, CONCURRENCY),
+    fetchIndustries().catch(() => ({})),
+  ]);
+  const res = res0.filter(Boolean);
+  for (const r of res) r.ind = industry[r.code] ?? null;
+  console.log(`[flows] 업종 ${Object.keys(industry).length}종 매핑 · 집계 중 업종 있음 ${res.filter((r) => r.ind).length}`);
   console.log(`[flows] 집계 ${res.length}종 · ${((Date.now() - t0) / 1000).toFixed(0)}초`);
   // 빈·부분 결과로 어제 파일을 덮지 않는다 — 대상의 80% 미만이면 실패로 본다.
   if (res.length < uni.length * 0.8) throw new Error(`집계 실패가 많다 (${res.length}/${uni.length})`);
