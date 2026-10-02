@@ -158,14 +158,18 @@ async function fetchEtfList() {
 async function fetchThemeCards() {
   const index = new Map();          // 테마 이름 → no
   for (let page = 1; page <= THEME_PAGES; page++) {
-    const json = await fetchNaverJson(NAVER_THEME_LIST(page));
+    // ★ 2026-09-29~: 마지막 쪽 다음을 부르면 빈 배열이 아니라 **404** 가 온다 → 크롤 전체가 죽었다(4일 연속 실패).
+    //   목록이 등락률 순이라 쪽을 넘기는 사이 순서가 바뀌어 이름이 겹치면 index.size 가 totalCount 에 못 미쳐
+    //   한 쪽을 더 부른다. 쪽 수는 totalCount 로 끊고, 404 는 '끝' 으로 본다.
+    const json = await fetchNaverJson(NAVER_THEME_LIST(page)).catch(() => null);
     const groups = json?.groups ?? [];
     if (groups.length === 0) break;
     for (const g of groups) {
       const name = String(g?.name ?? "").trim();
       if (name && g?.no != null) index.set(name, String(g.no));
     }
-    if (index.size >= (json?.totalCount ?? 0)) break;
+    const total = json?.totalCount ?? 0;
+    if (index.size >= total || page * 100 >= total) break;
   }
   // 시가총액 — 코스피·코스닥 전 종목(약 3,800종, 100종/쪽). 잡주를 걷어내는 기준이다.
   const cap = new Map();            // 종목코드 → 시총(억원)

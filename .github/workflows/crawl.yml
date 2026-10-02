@@ -33,12 +33,14 @@ jobs:
       # 투자자별 매집 집계(portfolio-web '수급 매집' 탭) — 실패해도 ETF 색인 커밋은 막지 않는다.
       #   실패하면 어제 investor-flows.json 이 그대로 남는다(스크립트가 부분 결과로 덮지 않는다).
       - name: Investor flows
+        if: always()          # ETF 크롤이 실패해도 수급 집계는 따로 돈다
         run: node scripts/flows.js
         continue-on-error: true
         env:
           CONCURRENCY: "6"
 
       - name: Commit if changed
+        if: always()          # 한쪽만 성공해도 그 결과는 올린다(실패한 쪽은 어제 파일 그대로)
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
