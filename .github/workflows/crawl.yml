@@ -39,6 +39,12 @@ jobs:
         env:
           CONCURRENCY: "6"
 
+      # 시장경보(투자주의·경고·위험) — portfolio-web 지수 탭 카드의 경고 책갈피. 실패하면 어제 파일 그대로.
+      - name: Market alerts
+        if: always()
+        run: node scripts/alerts.js
+        continue-on-error: true
+
       - name: Commit if changed
         if: always()          # 한쪽만 성공해도 그 결과는 올린다(실패한 쪽은 어제 파일 그대로)
         run: |
