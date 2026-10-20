@@ -47,6 +47,12 @@ jobs:
         env:
           CONCURRENCY: "6"
 
+      # 메모리 현물가(DRAMeXchange 공개 시세) — 이력을 매일 쌓는다(과거 시세는 유료라 못 받는다). 실패하면 어제 파일 그대로.
+      - name: Memory prices
+        if: always()
+        run: node scripts/memory-prices.js
+        continue-on-error: true
+
       # 시장경보(투자주의·경고·위험) — portfolio-web 지수 탭 카드의 경고 책갈피. 실패하면 어제 파일 그대로.
       - name: Market alerts
         if: always()
