@@ -8,6 +8,11 @@
 //   (실측 2026-10-13: 투자경고 19종 — 피에스케이 319660 은 9/28 지정·미해제)
 //
 //   실패하면 **아무것도 쓰지 않는다** — 빈 파일로 덮으면 경고가 전부 풀린 것처럼 보인다(어제 파일 유지).
+//
+//   + 매매거래정지(2026-10-27 추가, 사용자: "투자경고랑 같은 로직") — KIND tradinghaltissue 목록(오늘 기준 정지 중인 종목, 이름·사유).
+//     목록에 종목코드가 없어 KIND 상장법인목록(회사명→종목코드)으로 바꾼다. ETF·스팩 등 목록에 없는 이름은 건너뛴다.
+//     marketType=0(전체) 을 꼭 넣는다 — 빈 값이면 빈 응답이 온다(실측). 응답은 UTF-8.
+//     정지 목록만 실패하면 경고 3단계는 그대로 쓰고 정지만 뺀다(하루 동안 정지 책갈피만 없음).
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -56,22 +61,65 @@ async function fetchKind(menuIndex) {
   }
 }
 
+async function kindPost(url, form, referer, enc) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), 30_000);
+  try {
+    const resp = await fetch(url, {
+      method: form ? "POST" : "GET", signal: ctrl.signal,
+      headers: { "User-Agent": UA, "Referer": referer, ...(form ? { "Content-Type": "application/x-www-form-urlencoded" } : {}) },
+      body: form ? new URLSearchParams(form).toString() : undefined,
+    });
+    if (!resp.ok) throw new Error(`KIND HTTP ${resp.status} ${url}`);
+    return new TextDecoder(enc).decode(await resp.arrayBuffer());
+  } finally { clearTimeout(t); }
+}
+const cells = (tr) => (tr.match(/<t[dh][^>]*>[\s\S]*?<\/t[dh]>/g) ?? []).map((x) => x.replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim());
+
+// 매매거래정지 중인 종목 → [{ code, name, reason }]
+async function fetchHalts() {
+  const HALT_URL = "https://kind.krx.co.kr/investwarn/tradinghaltissue.do";
+  const html = await kindPost(HALT_URL, {
+    method: "searchTradingHaltIssueSub", currentPageSize: "3000", pageIndex: "1", searchMode: "", searchCodeType: "",
+    searchCorpName: "", forward: "tradinghaltissue_sub", paxreq: "", outsvcno: "", marketType: "0", repIsuSrtCd: "",
+  }, `${HALT_URL}?method=searchTradingHaltIssueMain`, "utf-8");
+  if (!/사유/.test(html)) throw new Error("KIND 정지 목록 응답에 표가 없다");
+  const rows = (html.match(/<tr[^>]*>[\s\S]*?<\/tr>/g) ?? []).map(cells).filter((c) => c.length >= 3 && /^\d+$/.test(c[0]));
+  // 회사명 → 종목코드 (상장법인목록, EUC-KR 표)
+  const corp = await kindPost("https://kind.krx.co.kr/corpgeneral/corpList.do?method=download&searchType=13", null,
+    "https://kind.krx.co.kr/corpgeneral/corpList.do?method=loadInitPage", "euc-kr");
+  const codeOf = new Map();
+  for (const tr of corp.match(/<tr[^>]*>[\s\S]*?<\/tr>/g) ?? []) {
+    const c = cells(tr);
+    if (c.length >= 3 && /^[\dA-Za-z]{6}$/.test(c[2])) codeOf.set(c[0], c[2]);
+  }
+  if (codeOf.size < 1000) throw new Error(`상장법인목록이 너무 적다(${codeOf.size})`);
+  const out = [];
+  for (const [, name, reason] of rows) { const code = codeOf.get(name); if (code) out.push({ code, name, reason }); }
+  return { halts: out, total: rows.length };
+}
+
 async function main() {
   const today = kstYmd();
   const [caution, warning, danger] = await Promise.all([fetchKind(1), fetchKind(2), fetchKind(3)]);
+  let halt = { halts: [], total: 0 };
+  try { halt = await fetchHalts(); } catch (e) { console.error(`⚠ 거래정지 목록 실패 — 경고 3단계만 쓴다: ${e.message}`); }
   const active = (rows) => rows.filter((r) => r.to === "-" || r.to === "");
   // 높은 단계가 이긴다: 투자주의 < 투자경고 < 투자위험
   const alerts = {};
   for (const r of caution.filter((x) => x.from === today)) alerts[r.code] = { level: "투자주의", from: r.from, name: r.name };
   for (const r of active(warning)) alerts[r.code] = { level: "투자경고", from: r.from, name: r.name };
+  // 거래정지는 투자경고보다 위, 투자위험보다 아래(토스 뱃지 우선순위와 같다)
+  for (const r of halt.halts) if (alerts[r.code]?.level !== "투자위험") alerts[r.code] = { level: "거래정지", from: today, name: r.name, reason: r.reason };
   for (const r of active(danger)) alerts[r.code] = { level: "투자위험", from: r.from, name: r.name };
 
   const count = (lv) => Object.values(alerts).filter((a) => a.level === lv).length;
   const meta = { version: today, builtAt: new Date().toISOString(),
-                 warning: count("투자경고"), danger: count("투자위험"), caution: count("투자주의") };
+                 warning: count("투자경고"), danger: count("투자위험"), caution: count("투자주의"),
+                 halt: count("거래정지"), haltListed: halt.total };
   await fs.mkdir(DATA_DIR, { recursive: true });
   await fs.writeFile(path.join(DATA_DIR, "market-alerts.json"), JSON.stringify({ meta, alerts }, null, 0) + "\n");
-  console.log(`시장경보: 투자경고 ${meta.warning} · 투자위험 ${meta.danger} · 투자주의(오늘) ${meta.caution} → data/market-alerts.json`);
+  console.log(`시장경보: 투자경고 ${meta.warning} · 투자위험 ${meta.danger} · 투자주의(오늘) ${meta.caution} · 거래정지 ${meta.halt}/${meta.haltListed} → data/market-alerts.json`);
 }
 
 main().catch((e) => { console.error(`⚠ 시장경보 수집 실패 — 어제 파일을 그대로 둔다: ${e.message}`); process.exit(1); });
