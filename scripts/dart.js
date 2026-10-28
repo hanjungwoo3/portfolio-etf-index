@@ -131,6 +131,13 @@ async function main() {
       console.log(`DART ${ymd}: ${rows.length}건 (종목코드 ${rows.filter(r => r.code).length}건)${meta.final ? " · 마감" : ""}`);
     } catch (e) { console.error(`⚠ DART ${ymd} 실패 — 이전 파일 그대로: ${e.message}`); }
   }
+  // 어제가 이미 마감(final)돼 위에서 다시 안 받았어도, 본문이 덜 찼으면 이어서 채운다
+  if (!targets.includes(yday)) {
+    try {
+      const j = JSON.parse(await fs.readFile(path.join(DIR, `${yday}.json`), "utf8"));
+      if (Array.isArray(j.rows)) await fillBodies(yday, j.rows);
+    } catch { /* 어제 파일 없음 */ }
+  }
   // 날짜 목록 + 오래된 파일 정리
   const keepFrom = shift(today, -KEEP_DAYS);
   const files = (await fs.readdir(DIR)).filter(f => /^\d{4}-\d{2}-\d{2}\.json$/.test(f));
