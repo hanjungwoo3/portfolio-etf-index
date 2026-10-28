@@ -3,10 +3,9 @@ name: DART disclosures (10 min)
 # portfolio-web '📋 최신공시' — DART 오늘의 공시(유가·코스닥)를 10분마다 받아 dart 브랜치에 날짜별 JSON 으로.
 #   평일 07:00~20:00 KST(= UTC 22:00 전날 ~ 11:00). GitHub 예약 실행은 붐비면 몇 분 늦는다.
 #   10분마다 main 에 커밋하면 기록이 불어나서, dart 브랜치 하나에 커밋 하나만 계속 덮어쓴다(--amend + force push).
+# 예약은 GitHub schedule 대신 Cloudflare 워커(portfolio-web/workers/dart-cron)가 10분마다 workflow_dispatch 로 깨운다 —
+#   GitHub schedule 은 붐비면 몇 시간씩 밀려 10분 예약이 하루 2번만 돌았다(2026-10-28). 평일 07~20시 KST 거르기는 워커가 한다.
 on:
-  schedule:
-    - cron: "*/10 22-23 * * 0-4"   # 월~금 07:00~08:50 KST
-    - cron: "*/10 0-11 * * 1-5"    # 월~금 09:00~20:50 KST
   workflow_dispatch:
     inputs:
       backfill:
