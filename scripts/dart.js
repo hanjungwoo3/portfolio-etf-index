@@ -77,6 +77,14 @@ async function main() {
   const targets = [today];
   const ym = await readMeta(yday);
   if (!ym?.final) targets.push(yday);              // 전날은 한 번 더 받아 마감
+  // 빠진 지난 날짜 메우기 — 실행마다 BACKFILL 일(기본 3)씩, 최근 KEEP_DAYS 일 중 파일이 없는 날(사용자 2026-10-28 "2일치만 되는거야?").
+  //   수동 실행에서 BACKFILL=40 이면 한 번에 다 채운다.
+  const backfill = Number(process.env.BACKFILL ?? 3);
+  for (let i = 2, added = 0; i <= KEEP_DAYS && added < backfill; i++) {
+    const d = shift(today, -i);
+    if (await readMeta(d)) continue;   // 주말·휴장일도 한 번 받아 0건 파일로 — 웹이 그 날짜를 골라도 직접 조회로 안 넘어가게
+    targets.push(d); added++;
+  }
   for (const ymd of targets) {
     try {
       const rows = (await day(ymd)).map(r => ({ ...r, code: codes.get(norm(r.corp)) }));

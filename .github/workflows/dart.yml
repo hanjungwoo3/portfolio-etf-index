@@ -8,6 +8,11 @@ on:
     - cron: "*/10 22-23 * * 0-4"   # 월~금 07:00~08:50 KST
     - cron: "*/10 0-11 * * 1-5"    # 월~금 09:00~20:50 KST
   workflow_dispatch:
+    inputs:
+      backfill:
+        description: "빠진 지난 날짜를 한 번에 몇 일까지 채울지(기본 3, 최대 40)"
+        required: false
+        default: "3"
 
 permissions:
   contents: write
@@ -37,6 +42,8 @@ jobs:
           fi
       - name: Fetch DART
         run: node scripts/dart.js dart-out
+        env:
+          BACKFILL: ${{ github.event.inputs.backfill || '3' }}
       - name: Publish (single commit, force)
         run: |
           cd dart-out
