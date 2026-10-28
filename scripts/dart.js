@@ -59,6 +59,43 @@ async function day(ymd) {
   return out.filter(r => !seen.has(r.rcpNo) && seen.add(r.rcpNo)).sort((a, b) => b.time.localeCompare(a.time) || b.rcpNo.localeCompare(a.rcpNo));
 }
 
+// ── 공시 본문 글 — 🔍AI 요약용(사용자 2026-10-28: 구글 AI 가 "DART 외부 접근 제한으로 본문 수집 불가").
+//   main.do 의 viewDoc("rcpNo","dcmNo",…) → /report/viewer.do?rcpNo&dcmNo&eleId=0&offset=0&length=0&dtd=HTML(EUC-KR) 의 글자만.
+//   실행마다 아직 없는 것만, 최대 BODY_MAX 건(차례로 — DART 에 몰아치지 않게). 저장: data/dart/body/YYYY-MM-DD.json { rcpNo: text }
+const BODY_MAX = Number(process.env.BODY_MAX ?? 150), BODY_CHARS = 3500;
+async function bodyText(rcp) {
+  const main = await get(`https://dart.fss.or.kr/dsaf001/main.do?rcpNo=${rcp}`);
+  const m = /viewDoc\("(\d+)",\s*"(\d+)",\s*"([^"]*)",\s*"([^"]*)",\s*"([^"]*)",\s*"([^"]*)"/.exec(main);
+  if (!m) return "";
+  const ctrl = new AbortController(); const t = setTimeout(() => ctrl.abort(), 30_000);
+  try {
+    const r = await fetch(`https://dart.fss.or.kr/report/viewer.do?rcpNo=${m[1]}&dcmNo=${m[2]}&eleId=${m[3]}&offset=${m[4]}&length=${m[5]}&dtd=${m[6]}`,
+      { headers: { "User-Agent": UA, Referer: `https://dart.fss.or.kr/dsaf001/main.do?rcpNo=${rcp}` }, signal: ctrl.signal });
+    if (!r.ok) return "";
+    const buf = await r.arrayBuffer();
+    const head = new TextDecoder("latin1").decode(buf.slice(0, 2000));
+    const html = new TextDecoder(/charset=utf-8/i.test(head) ? "utf-8" : "euc-kr").decode(buf);
+    let t2 = html.replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>/gi, "")
+      .replace(/<\/(tr|p|div|h\d|li)>|<br\s*\/?>/gi, "\n").replace(/<\/t[dh]>/gi, " | ").replace(/<[^>]+>/g, "")
+      .replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">");
+    t2 = t2.split("\n").map(l => l.replace(/[ \t|]+\|[ \t|]*/g, " | ").replace(/[ \t]+/g, " ").trim().replace(/^\|\s*|\s*\|$/g, "")).filter(Boolean).join("\n");
+    return t2.slice(0, BODY_CHARS);
+  } finally { clearTimeout(t); }
+}
+async function fillBodies(ymd, rows) {
+  const dir = path.join(DIR, "body"); await fs.mkdir(dir, { recursive: true });
+  const file = path.join(dir, `${ymd}.json`);
+  let bodies = {};
+  try { bodies = JSON.parse(await fs.readFile(file, "utf8")); } catch { /* 처음 */ }
+  const todo = rows.filter(r => !(r.rcpNo in bodies)).slice(0, BODY_MAX);
+  let got = 0;
+  for (const r of todo) {
+    try { bodies[r.rcpNo] = await bodyText(r.rcpNo); got++; } catch { /* 다음 실행에 다시 */ }
+  }
+  await fs.writeFile(file, JSON.stringify(bodies) + "\n");
+  console.log(`DART 본문 ${ymd}: +${got} (총 ${Object.keys(bodies).length}/${rows.length})`);
+}
+
 async function corpCodes() {
   try {
     const j = JSON.parse(await fs.readFile(path.join(ROOT, "data", "listed-corps.json"), "utf8"));
@@ -90,6 +127,7 @@ async function main() {
       const rows = (await day(ymd)).map(r => ({ ...r, code: codes.get(norm(r.corp)) }));
       const meta = { date: ymd, builtAt: new Date().toISOString(), count: rows.length, final: ymd !== today };
       await fs.writeFile(path.join(DIR, `${ymd}.json`), JSON.stringify({ meta, rows }) + "\n");
+      if (ymd === today || ymd === yday) await fillBodies(ymd, rows).catch(e => console.error(`⚠ 본문 ${ymd}: ${e.message}`));   // 본문은 오늘·어제만
       console.log(`DART ${ymd}: ${rows.length}건 (종목코드 ${rows.filter(r => r.code).length}건)${meta.final ? " · 마감" : ""}`);
     } catch (e) { console.error(`⚠ DART ${ymd} 실패 — 이전 파일 그대로: ${e.message}`); }
   }
@@ -97,8 +135,12 @@ async function main() {
   const keepFrom = shift(today, -KEEP_DAYS);
   const files = (await fs.readdir(DIR)).filter(f => /^\d{4}-\d{2}-\d{2}\.json$/.test(f));
   for (const f of files) if (f.slice(0, 10) < keepFrom) await fs.rm(path.join(DIR, f));
+  try { for (const f of await fs.readdir(path.join(DIR, "body"))) if (f.slice(0, 10) < keepFrom) await fs.rm(path.join(DIR, "body", f)); } catch { /* 본문 폴더 없음 */ }
   const dates = (await fs.readdir(DIR)).filter(f => /^\d{4}-\d{2}-\d{2}\.json$/.test(f)).map(f => f.slice(0, 10)).sort().reverse();
-  await fs.writeFile(path.join(DIR, "index.json"), JSON.stringify({ builtAt: new Date().toISOString(), dates }) + "\n");
+  // 날짜별 건수 — 웹이 ◀ ▶ 로 넘길 때 0건(주말·휴장일)을 건너뛴다(사용자 2026-10-28 "이건 넘어갈 수 없나")
+  const counts = {};
+  for (const d of dates) counts[d] = (await readMeta(d))?.count ?? 0;
+  await fs.writeFile(path.join(DIR, "index.json"), JSON.stringify({ builtAt: new Date().toISOString(), dates, counts }) + "\n");
 }
 
 main().catch(e => { console.error(e); process.exit(1); });
