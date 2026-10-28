@@ -94,6 +94,10 @@ async function fetchHalts() {
     if (c.length >= 3 && /^[\dA-Za-z]{6}$/.test(c[2])) codeOf.set(c[0], c[2]);
   }
   if (codeOf.size < 1000) throw new Error(`상장법인목록이 너무 적다(${codeOf.size})`);
+  // 회사명 → 종목코드 표도 따로 낸다 — portfolio-web 최신공시(DART 오늘의 공시엔 종목코드가 없고 정식 회사명만 있다,
+  //   예: '현대자동차' ↔ 토스·네이버 '현대차'). 실패하면 어제 파일 그대로.
+  await fs.writeFile(path.join(DATA_DIR, "listed-corps.json"),
+    JSON.stringify({ meta: { builtAt: new Date().toISOString(), count: codeOf.size }, corps: Object.fromEntries(codeOf) }) + "\n");
   const out = [];
   for (const [, name, reason] of rows) { const code = codeOf.get(name); if (code) out.push({ code, name, reason }); }
   return { halts: out, total: rows.length };

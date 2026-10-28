@@ -1,0 +1,46 @@
+name: DART disclosures (10 min)
+
+# portfolio-web '📋 최신공시' — DART 오늘의 공시(유가·코스닥)를 10분마다 받아 dart 브랜치에 날짜별 JSON 으로.
+#   평일 07:00~20:00 KST(= UTC 22:00 전날 ~ 11:00). GitHub 예약 실행은 붐비면 몇 분 늦는다.
+#   10분마다 main 에 커밋하면 기록이 불어나서, dart 브랜치 하나에 커밋 하나만 계속 덮어쓴다(--amend + force push).
+on:
+  schedule:
+    - cron: "*/10 22-23 * * 0-4"   # 월~금 07:00~08:50 KST
+    - cron: "*/10 0-11 * * 1-5"    # 월~금 09:00~20:50 KST
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: dart
+  cancel-in-progress: false
+
+jobs:
+  dart:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Prepare dart branch worktree
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git fetch --depth=1 origin dart; then
+            git worktree add -B dart dart-out FETCH_HEAD
+          else
+            git worktree add --detach dart-out
+            cd dart-out && git checkout --orphan dart && git rm -rfq . && cd ..
+          fi
+      - name: Fetch DART
+        run: node scripts/dart.js dart-out
+      - name: Publish (single commit, force)
+        run: |
+          cd dart-out
+          git add -A data
+          if git diff --staged --quiet; then echo "no changes"; exit 0; fi
+          git commit -q --amend -m "data: DART disclosures" 2>/dev/null || git commit -q -m "data: DART disclosures"
+          git push -f origin dart
