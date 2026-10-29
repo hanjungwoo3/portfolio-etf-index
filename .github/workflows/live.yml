@@ -1,0 +1,51 @@
+name: Live market snapshots (10 min)
+
+# portfolio-web ETF 랭킹·종목찾기(눌림목)·실적 일정·히트맵 — 장중 10분마다 받아 live 브랜치에 JSON 으로(scripts/live.js).
+#   깨우기는 Cloudflare 워커(portfolio-web/workers/dart-cron)가 workflow_dispatch 로 — GitHub schedule 은 붐비면 몇 시간씩 밀린다.
+#   10분마다 main 에 커밋하면 기록이 불어나서, live 브랜치 하나에 커밋 하나만 계속 덮어쓴다(--amend + force push, dart 와 같은 방식).
+#   장 시간(국내 평일 08:00~20:20 KST · 미국 뉴욕 평일 04:00~20:20) 거르기는 워커와 스크립트가 한 번씩.
+on:
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "장 시간과 상관없이 전부 받기(1)"
+        required: false
+        default: "0"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: live
+  cancel-in-progress: false
+
+jobs:
+  live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Prepare live branch worktree
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git fetch --depth=1 origin live; then
+            git worktree add -B live live-out FETCH_HEAD
+          else
+            git worktree add --detach live-out
+            cd live-out && git checkout --orphan live && git rm -rfq . && cd ..
+          fi
+      - name: Fetch snapshots
+        run: node scripts/live.js live-out
+        env:
+          FORCE: ${{ github.event.inputs.force || '0' }}
+      - name: Publish (single commit, force)
+        run: |
+          cd live-out
+          git add -A data
+          if git diff --staged --quiet; then echo "no changes"; exit 0; fi
+          git commit -q --amend -m "data: live snapshots" 2>/dev/null || git commit -q -m "data: live snapshots"
+          git push -f origin live
