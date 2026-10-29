@@ -1,6 +1,6 @@
 // 장중 공용 데이터 — portfolio-web 의 ETF 랭킹·종목찾기(눌림목)·실적 일정·히트맵을 서버에서 한 번만 받는다
 //   (사용자 요청 2026-10-29 "ETF 랭킹, 종목찾기(눌림목), 실적 일정, 히트맵까지 다 하자").
-//   사용자마다 프록시로 부르던 것을 여기 한 곳(10분마다)으로 — 웹은 이 파일만 읽는다. 사용자 수와 상관없이 호출 수가 고정된다.
+//   사용자마다 프록시로 부르던 것을 여기 한 곳(2분마다 — 자주 보는 것만 매번, 나머지 10분)으로 — 웹은 이 파일만 읽는다. 사용자 수와 상관없이 호출 수가 고정된다.
 //   깨우기는 Cloudflare 워커(portfolio-web/workers/dart-cron)가 workflow_dispatch 로. 장 시간 거르기는 여기서 한 번 더.
 //   출력: <OUT>/data/live/
 //     etf-ranking.json  { fetchedAt, rows:[[code, close, base(직전 거래일 종가), volume, tradeDate(KST)]] } — 토스 시세 전수(6콜)
@@ -53,7 +53,11 @@ async function save(name, obj) {
 }
 // 장 밖이어도 파일이 없거나 오래됐으면(6시간) 한 번 받는다 — 주말을 건너 월요일 첫 화면이 비지 않게
 const age = (name) => (index[name] ? Date.now() - index[name] : Infinity);
-const due = (name, open, maxAgeMs = 6 * 3600_000) => FORCE || open || age(name) > maxAgeMs;
+// 장중 주기 — 워커가 2분마다 깨운다(사용자 2026-10-29 "2분으로"). 자주 보는 것(ETF 랭킹·대표 히트맵 4개)은 매번,
+//   나머지는 10분(조금 일찍 — 깨우는 시각이 몇 초씩 밀려도 10분 칸을 건너뛰지 않게 9분 30초)
+const HOT = new Set(["etf-ranking", "heatmap/kospi200", "heatmap/kosdaq150", "heatmap/us_sp500", "heatmap/us_ndx"]);
+const EVERY = 9.5 * 60_000;
+const due = (name, open, maxAgeMs = 6 * 3600_000) => FORCE || (open && (HOT.has(name) || age(name) >= EVERY)) || age(name) > maxAgeMs;
 
 // ─── TradingView 스캐너 ───────────────────────────────────────────────
 async function scan(endpoint, body) {

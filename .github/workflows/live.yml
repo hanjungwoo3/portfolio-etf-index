@@ -1,6 +1,6 @@
-name: Live market snapshots (10 min)
+name: Live market snapshots (2 min)
 
-# portfolio-web ETF 랭킹·종목찾기(눌림목)·실적 일정·히트맵 — 장중 10분마다 받아 live 브랜치에 JSON 으로(scripts/live.js).
+# portfolio-web ETF 랭킹·종목찾기(눌림목)·실적 일정·히트맵 — 장중 2분마다(자주 보는 것만, 나머지 10분) 받아 live 브랜치에 JSON 으로(scripts/live.js).
 #   깨우기는 Cloudflare 워커(portfolio-web/workers/dart-cron)가 workflow_dispatch 로 — GitHub schedule 은 붐비면 몇 시간씩 밀린다.
 #   10분마다 main 에 커밋하면 기록이 불어나서, live 브랜치 하나에 커밋 하나만 계속 덮어쓴다(--amend + force push, dart 와 같은 방식).
 #   장 시간(국내 평일 08:00~20:20 KST · 미국 뉴욕 평일 04:00~20:20) 거르기는 워커와 스크립트가 한 번씩.
