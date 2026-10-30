@@ -78,9 +78,9 @@ const HEAT_COLUMNS = ["name", "description", "logoid", "change", "close", "volum
 const HEAT = {
   kospi200: ["kr", "SYML:KRX;KOSPI200"], kospi: ["kr", "SYML:KRX;KOSPI"], kosdaq150: ["kr", "SYML:KRX;KOSDAQ150"],
   kosdaq: ["kr", "SYML:KRX;KOSDAQ", 700], all: ["kr", null, 700], kr_valueup: ["kr", "valueup"],
-  us_sp500: ["us", "SYML:SP;SPX"], us_ndx: ["us", "SYML:NASDAQ;NDX"], us_nasdaq: ["us", "SYML:NASDAQ;IXIC", 1000],
+  us_sp500: ["us", "SYML:SP;SPX", 510], us_ndx: ["us", "SYML:NASDAQ;NDX"], us_nasdaq: ["us", "SYML:NASDAQ;IXIC", 1000],
   us_dow: ["us", "SYML:DJ;DJI"], us_dowcomp: ["us", "SYML:DJ;DJA"], us_dowtrans: ["us", "SYML:DJ;DJT"], us_dowutil: ["us", "SYML:DJ;DJU"],
-  us_kbwbank: ["us", "SYML:NASDAQ;BKX"], us_r1000: ["us", "SYML:TVC;RUI"], us_r2000: ["us", "SYML:TVC;RUT", 1000],
+  us_kbwbank: ["us", "SYML:NASDAQ;BKX"], us_r1000: ["us", "SYML:TVC;RUI", 1010], us_r2000: ["us", "SYML:TVC;RUT", 1000],
   us_r3000: ["us", "SYML:TVC;RUA", 1000], us_all: ["us", null, 1000], us_tech: ["us", "sector:Electronic Technology", 500],
 };
 // 코리아 밸류업 — symbolset 이 없어 네이버 편입종목(100종) 코드를 tickers 로.
