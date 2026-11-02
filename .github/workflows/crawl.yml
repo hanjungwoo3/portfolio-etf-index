@@ -53,6 +53,12 @@ jobs:
         run: node scripts/alerts.js
         continue-on-error: true
 
+      # 기업 밸류업 꼬리표(저PBR·고배당·밸류업 우수기업) — alerts.js 가 쓴 listed-corps.json 으로 이름→코드. 실패한 명단만 어제 값.
+      - name: Valueup tags
+        if: always()
+        run: node scripts/valueup.js
+        continue-on-error: true
+
       - name: Commit if changed
         if: always()          # 한쪽만 성공해도 그 결과는 올린다(실패한 쪽은 어제 파일 그대로)
         run: |
