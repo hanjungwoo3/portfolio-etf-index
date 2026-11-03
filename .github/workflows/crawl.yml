@@ -59,6 +59,12 @@ jobs:
         run: node scripts/valueup.js
         continue-on-error: true
 
+      # 서학개미(한국 개인의 미국 주식) — 예탁결제원 세이브로 결제·보관 상위 50 + 레버리지 쏠림(portfolio-web 지수 미국 페이지). 실패하면 어제 파일 그대로.
+      - name: Seohak
+        if: always()
+        run: node scripts/seohak.js
+        continue-on-error: true
+
       - name: Commit if changed
         if: always()          # 한쪽만 성공해도 그 결과는 올린다(실패한 쪽은 어제 파일 그대로)
         run: |
