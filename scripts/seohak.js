@@ -93,6 +93,31 @@ async function figiMap(isins, cache) {
   return cache;
 }
 
+// ── 티커 → 토스 한글 이름·로고(자동완성 검색). _browserId·deviceId 쿠키 둘 다 없으면 400. ETF 는 이름이 티커 그대로라 ko 를 비운다.
+//   실패해도 그만(화면은 로고 대체 주소·영문 이름으로) — 한 번 찾은 건 캐시.
+async function tossMeta(cache) {
+  const todo = Object.values(cache).filter((c) => c.t && c.ko === undefined && !c.tossTried);
+  for (const c of todo) {
+    try {
+      const resp = await fetch("https://wts-info-api.tossinvest.com/api/v3/search-all/wts-auto-complete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "User-Agent": UA, "Cookie": "_browserId=seohak0crawler; deviceId=WTS-seohak0crawler" },
+        body: JSON.stringify({ query: c.t, sections: [{ type: "PRODUCT", option: { addIntegratedSearchResult: true } }] }),
+      });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const j = await resp.json();
+      const it = (j.result?.[0]?.data?.items ?? []).find((x) => (x.symbol ?? "").toUpperCase() === c.t.toUpperCase());
+      c.tossTried = true;
+      if (it) {
+        if (it.productName && it.productName !== it.symbol) c.ko = it.productName;
+        if (it.logoImageUrl) c.logo = it.logoImageUrl;
+        if (it.productCode) c.toss = it.productCode;
+      }
+    } catch (e) { console.error(`⚠ 토스 이름·로고 ${c.t}: ${e.message}`); if (/HTTP 4/.test(e.message)) break; }
+    await sleep(150);
+  }
+}
+
 // 레버리지·인버스 — ETP 이름으로. OpenFIGI 이름은 약어투성이(DIREX DAI SEMI BE 3X = SOXS, DIR DLY 20+YR TR BL3X = TMF, PLTR BEA 1X = PLTD)
 //   배수 표기·ULTRA·BULL/BEAR 가 있으면 레버리지 상품, 방향은 BEAR/BE/BEA/SHORT/INVERSE/VIX 면 하락(인버스) 쪽 — VIX 매수는 하락에 거는 것
 const LEV_RE = /\d(\.\d)?X\b|BL3X|\bULTRA|LEVERAGED|\b(BULL?|BU|BEAR?|BE|SHORT|SHRT|INVERSE)\b/i;
@@ -143,6 +168,7 @@ async function main() {
   // 티커
   const allIsins = [...dayNet, ...daySell, ...weekNet, ...weekSell, ...h.rows, ...(hp?.rows ?? []), ...[...levRows.values()].flat()].map((r) => r.isin);
   await figiMap(allIsins, cache);
+  await tossMeta(cache);
 
   const lev = new Map(levPrev);
   for (const [date, rows] of levRows) {
@@ -160,7 +186,7 @@ async function main() {
   }
   const levArr = [...lev.values()].sort((a, b) => a.date.localeCompare(b.date)).slice(-LEV_DAYS);
 
-  const tag = (r) => ({ ...r, t: cache[r.isin]?.t, lev: levKind(r.isin, r.n, cache) });
+  const tag = (r) => { const c = cache[r.isin]; return { ...r, t: c?.t, ko: c?.ko, logo: c?.logo, fn: c?.fn, lev: levKind(r.isin, r.n, cache) }; };
   const prevRank = new Map((hp?.rows ?? []).map((r, i) => [r.isin, { rank: i + 1, amt: r.amt }]));
   const out = {
     meta: { builtAt: new Date().toISOString(), setlDate: last.day, weekFrom, holdDate: h.day, holdPrevDate: hp?.day },
