@@ -186,7 +186,7 @@ async function main() {
   }
   const levArr = [...lev.values()].sort((a, b) => a.date.localeCompare(b.date)).slice(-LEV_DAYS);
 
-  const tag = (r) => { const c = cache[r.isin]; return { ...r, t: c?.t, ko: c?.ko, logo: c?.logo, fn: c?.fn, lev: levKind(r.isin, r.n, cache) }; };
+  const tag = (r) => { const c = cache[r.isin]; return { ...r, t: c?.t, ko: c?.ko, logo: c?.logo, fn: c?.fn, toss: c?.toss, lev: levKind(r.isin, r.n, cache) }; };
   const prevRank = new Map((hp?.rows ?? []).map((r, i) => [r.isin, { rank: i + 1, amt: r.amt }]));
   const out = {
     meta: { builtAt: new Date().toISOString(), setlDate: last.day, weekFrom, holdDate: h.day, holdPrevDate: hp?.day },
