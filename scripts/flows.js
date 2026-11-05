@@ -16,6 +16,11 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+// 토스 wts-info-api 는 2026-10-29 18시부터 _browserId + deviceId 쿠키 둘 다 없으면 400 — 실행마다 무작위(live.js 와 같은 처리).
+//   이게 빠져 10/29~11/4 일일 수집이 400 재시도로 시간을 다 쓰고 취소됐다(수익률·수급·구성 7일 정체).
+const TOSS_RID = Array.from({ length: 32 }, () => "abcdefghijklmnopqrstuvwxyz0123456789"[Math.floor(Math.random() * 36)]).join("");
+const TOSS_COOKIE = `_browserId=${TOSS_RID}; deviceId=WTS-${TOSS_RID}`;
+
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = path.resolve(__dirname, "..", "data");
@@ -45,11 +50,11 @@ async function getJson(url) {
       const ctl = new AbortController();
       const timer = setTimeout(() => ctl.abort(), 15_000);
       const resp = await fetch(url, {
-        headers: { "User-Agent": UA, Accept: "application/json", Referer: "https://www.tossinvest.com/" },
+        headers: { "User-Agent": UA, Accept: "application/json", Referer: "https://www.tossinvest.com/", Cookie: TOSS_COOKIE },
         signal: ctl.signal,
       });
+      if (resp.ok) { const j = await resp.json(); clearTimeout(timer); return j; }   // 본문 읽기까지 시간 제한 안에(전엔 머리만 받고 풀어 본문에서 멈출 수 있었다)
       clearTimeout(timer);
-      if (resp.ok) return await resp.json();
     } catch { /* 재시도 */ }
     await new Promise((r) => setTimeout(r, 800 * (t + 1)));
   }

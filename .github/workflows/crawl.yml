@@ -16,7 +16,7 @@ concurrency:
 jobs:
   crawl:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30   # 단계마다 따로 제한(아래) — 한 단계가 멈춰도 커밋까지 간다
     steps:
       - uses: actions/checkout@v4
 
@@ -26,6 +26,7 @@ jobs:
           node-version: "20"
 
       - name: Run crawler
+        timeout-minutes: 10
         run: node scripts/crawl.js
         env:
           CONCURRENCY: "6"
@@ -33,6 +34,7 @@ jobs:
       # 투자자별 매집 집계(portfolio-web '수급 매집' 탭) — 실패해도 ETF 색인 커밋은 막지 않는다.
       #   실패하면 어제 investor-flows.json 이 그대로 남는다(스크립트가 부분 결과로 덮지 않는다).
       - name: Investor flows
+        timeout-minutes: 8
         if: always()          # ETF 크롤이 실패해도 수급 집계는 따로 돈다
         run: node scripts/flows.js
         continue-on-error: true
@@ -41,6 +43,7 @@ jobs:
 
       # ETF 외국인·개인 순매수(portfolio-web 'ETF 랭킹' 수급별 순위) — etf-list.json(위 크롤 결과)을 읽는다. 실패하면 어제 파일 그대로.
       - name: ETF flows
+        timeout-minutes: 6
         if: always()
         run: node scripts/etf-flows.js
         continue-on-error: true
@@ -49,18 +52,21 @@ jobs:
 
       # 시장경보(투자주의·경고·위험) — portfolio-web 지수 탭 카드의 경고 책갈피. 실패하면 어제 파일 그대로.
       - name: Market alerts
+        timeout-minutes: 3
         if: always()
         run: node scripts/alerts.js
         continue-on-error: true
 
       # 기업 밸류업 꼬리표(저PBR·고배당·밸류업 우수기업) — alerts.js 가 쓴 listed-corps.json 으로 이름→코드. 실패한 명단만 어제 값.
       - name: Valueup tags
+        timeout-minutes: 3
         if: always()
         run: node scripts/valueup.js
         continue-on-error: true
 
       # 서학개미(한국 개인의 미국 주식) — 예탁결제원 세이브로 결제·보관 상위 50 + 레버리지 쏠림(portfolio-web 지수 미국 페이지). 실패하면 어제 파일 그대로.
       - name: Seohak
+        timeout-minutes: 5
         if: always()
         run: node scripts/seohak.js
         continue-on-error: true
