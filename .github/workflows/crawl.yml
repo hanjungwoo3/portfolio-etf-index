@@ -81,5 +81,9 @@ jobs:
             echo "no changes"
           else
             git commit -m "chore: daily ETF index update ($(date -u +%Y-%m-%d))"
-            git push
+            # 그 사이 다른 커밋이 올라왔으면(수동 수집 등) 받아서 다시 — 데이터 파일이 겹치면 이번 수집(ours=지금 것)을 쓴다. 최대 3번
+            for i in 1 2 3; do
+              git pull --rebase -X theirs origin main && git push && break
+              sleep $((i * 5))
+            done
           fi
