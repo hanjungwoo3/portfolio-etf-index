@@ -71,6 +71,13 @@ jobs:
         run: node scripts/seohak.js
         continue-on-error: true
 
+      # 미국 하이일드 스프레드(FRED BAMLH0A0HYM2) — portfolio-web 금리·투심 줄 카드. 실패하면 어제 파일 그대로.
+      - name: HY spread
+        timeout-minutes: 2
+        if: always()
+        run: node scripts/hy-spread.js
+        continue-on-error: true
+
       - name: Commit if changed
         if: always()          # 한쪽만 성공해도 그 결과는 올린다(실패한 쪽은 어제 파일 그대로)
         run: |
