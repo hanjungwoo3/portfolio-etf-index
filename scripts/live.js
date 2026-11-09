@@ -9,6 +9,7 @@
 //     heatmap/<소스>.json { fetchedAt, cols, rows:[d] } — 히트맵 소스 19개
 //     hot-now.json      { fetchedAt, snaps:[{at, m:{code:[값, 누적거래대금(원)]}}], meta:{code:[이름, 시장, 등락률, 상한가?]} }
 //                       — '지금 시끄러운 종목': 네이버 실시간 순위 4개를 매번 찍어 최근 14분 스냅샷을 쌓는다. 몇 배 몰렸나 계산은 웹(lib/hotNow, 규칙 한 벌)
+//     updown.json       { fetchedAt, KOSPI:[상한,오름,그대로,내림,하한], KOSDAQ:[…] } — 네이버 지수 integration upDownStockInfo(오른·내린 종목 수)
 //     index.json        { 이름: fetchedAt } — 웹 '갱신 시각' 표시용
 //   실패한 항목은 그 파일을 덮지 않는다(어제·직전 파일이 남는다). 0건도 덮지 않는다(일시적 0건이 굳는다).
 import fs from "node:fs/promises";
@@ -192,6 +193,15 @@ async function main() {
     // 날이 바뀌면(누적값이 0부터 다시) 어제 것은 버린다
     const snaps = [...prev.filter(x => now - x.at < HOT_KEEP_MS && kstYmd(x.at) === kstYmd(now)), { at: now, m }];
     await save("hot-now", { fetchedAt: now, snaps, meta });
+  });
+  // 오른·내린 종목 수 — 지수 서랍·지수 탭 '시장 폭' 막대(사용자 2026-11-09, kospimap 증시 전광판 ↑19 ↓79 처럼)
+  if (kr || FORCE || age("updown") > 6 * 3600_000) await job("updown", async () => {
+    const out = { fetchedAt: Date.now() };
+    for (const mkt of ["KOSPI", "KOSDAQ"]) {
+      const u = (await (await req(`https://m.stock.naver.com/api/index/${mkt}/integration`)).json()).upDownStockInfo;
+      if (u) out[mkt] = [u.upperCount, u.riseCount, u.steadyCount, u.fallCount, u.lowerCount].map(x => Number(x) || 0);   // 문자열로 온다. 오름은 상한 포함
+    }
+    if (out.KOSPI || out.KOSDAQ) await save("updown", out);
   });
   if (due("screener", kr)) await job("screener", async () => {
     const [kospi, kosdaq] = await Promise.all([scan("korea", screenBody("SYML:KRX;KOSPI")), scan("korea", screenBody("SYML:KRX;KOSDAQ"))]);
