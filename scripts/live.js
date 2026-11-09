@@ -7,6 +7,8 @@
 //     screener.json     { fetchedAt, cols, kospi:[d], kosdaq:[d] } — TradingView 스캐너 원본 행(웹이 같은 파서로 읽는다)
 //     earnings.json     { fetchedAt, cols, from, to, us:[d], kr:[d] } — 다음·최근 실적일이 창(오늘-7 ~ +28일) 안인 시총 상위
 //     heatmap/<소스>.json { fetchedAt, cols, rows:[d] } — 히트맵 소스 19개
+//     hot-now.json      { fetchedAt, snaps:[{at, m:{code:[값, 누적거래대금(원)]}}], meta:{code:[이름, 시장, 등락률, 상한가?]} }
+//                       — '지금 시끄러운 종목': 네이버 실시간 순위 4개를 매번 찍어 최근 14분 스냅샷을 쌓는다. 몇 배 몰렸나 계산은 웹(lib/hotNow, 규칙 한 벌)
 //     index.json        { 이름: fetchedAt } — 웹 '갱신 시각' 표시용
 //   실패한 항목은 그 파일을 덮지 않는다(어제·직전 파일이 남는다). 0건도 덮지 않는다(일시적 0건이 굳는다).
 import fs from "node:fs/promises";
@@ -57,7 +59,7 @@ async function save(name, obj) {
 const age = (name) => (index[name] ? Date.now() - index[name] : Infinity);
 // 장중 주기 — 워커가 2분마다 깨운다(사용자 2026-10-29 "2분으로"). 자주 보는 것(ETF 랭킹·대표 히트맵 4개)은 매번,
 //   나머지는 10분(조금 일찍 — 깨우는 시각이 몇 초씩 밀려도 10분 칸을 건너뛰지 않게 9분 30초)
-const HOT = new Set(["etf-ranking", "heatmap/kospi200", "heatmap/kosdaq150", "heatmap/us_sp500", "heatmap/us_ndx"]);
+const HOT = new Set(["hot-now", "etf-ranking", "heatmap/kospi200", "heatmap/kosdaq150", "heatmap/us_sp500", "heatmap/us_ndx"]);
 const EVERY = 9.5 * 60_000;
 const due = (name, open, maxAgeMs = 6 * 3600_000) => FORCE || (open && (HOT.has(name) || age(name) >= EVERY)) || age(name) > maxAgeMs;
 
@@ -147,6 +149,27 @@ async function etfRanking() {
   return rows;
 }
 
+// ─── 지금 시끄러운 종목 — 네이버 실시간 순위(거래대금·상승률 × 코스피·코스닥, pageSize≤100) 스냅샷 ─────
+//   순위는 오늘 누적값만 준다 → 매번 찍어 두고 웹이 몇 분 전 것과 빼서 '방금 몰린 돈'을 낸다(사용자 2026-11-09 "열어 두고 하지 말고 서버에서 수집하면?")
+const HOT_KEEP_MS = 14 * 60_000;
+async function hotNowSnap() {
+  const num = (s) => { const n = Number(String(s ?? "").replace(/,/g, "")); return Number.isFinite(n) ? n : 0; };
+  const m = {}, meta = {};
+  for (const kind of ["priceTop", "up"]) for (const mkt of ["KOSPI", "KOSDAQ"]) {
+    try {
+      const j = await (await req(`https://m.stock.naver.com/api/stocks/${kind}/${mkt}?page=1&pageSize=100`)).json();
+      for (const s of j.stocks ?? []) {
+        if (s.stockEndType !== "stock" || !s.itemCode) continue;
+        const price = num(s.closePriceRaw ?? s.closePrice), value = num(s.accumulatedTradingValueRaw) || num(s.accumulatedTradingValue) * 1e6;
+        if (!(price > 0)) continue;
+        m[s.itemCode] = [price, value];
+        meta[s.itemCode] = [s.stockName ?? "", mkt === "KOSPI" ? "코스피" : "코스닥", num(s.fluctuationsRatio), s.compareToPreviousPrice?.name === "UPPER_LIMIT" ? 1 : 0];
+      }
+    } catch (e) { console.error(`  ✗ hot-now ${kind}/${mkt}: ${e.message}`); }
+  }
+  return { m, meta };
+}
+
 async function job(name, fn) {
   try { await fn(); } catch (e) { console.error(`  ✗ ${name}: ${e.message}`); }
 }
@@ -160,6 +183,15 @@ async function main() {
   if (due("etf-ranking", kr)) await job("etf-ranking", async () => {
     const rows = await etfRanking();
     if (rows.length > 0) await save("etf-ranking", { fetchedAt: Date.now(), rows });
+  });
+  if (kr || FORCE) await job("hot-now", async () => {
+    const { m, meta } = await hotNowSnap();
+    if (!Object.keys(m).length) return;   // 0건은 덮지 않는다
+    const now = Date.now();
+    const prev = (await readJson(path.join(DIR, "hot-now.json")))?.snaps ?? [];
+    // 날이 바뀌면(누적값이 0부터 다시) 어제 것은 버린다
+    const snaps = [...prev.filter(x => now - x.at < HOT_KEEP_MS && kstYmd(x.at) === kstYmd(now)), { at: now, m }];
+    await save("hot-now", { fetchedAt: now, snaps, meta });
   });
   if (due("screener", kr)) await job("screener", async () => {
     const [kospi, kosdaq] = await Promise.all([scan("korea", screenBody("SYML:KRX;KOSPI")), scan("korea", screenBody("SYML:KRX;KOSDAQ"))]);
