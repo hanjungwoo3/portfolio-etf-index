@@ -199,7 +199,7 @@ async function main() {
     const out = { fetchedAt: Date.now() };
     for (const mkt of ["KOSPI", "KOSDAQ"]) {
       const u = (await (await req(`https://m.stock.naver.com/api/index/${mkt}/integration`)).json()).upDownStockInfo;
-      if (u) out[mkt] = [u.upperCount, u.riseCount, u.steadyCount, u.fallCount, u.lowerCount].map(x => Number(x) || 0);   // 문자열로 온다. 오름은 상한 포함
+      if (u) out[mkt] = [u.upperCount, u.riseCount, u.steadyCount, u.fallCount, u.lowerCount].map(x => Number(String(x ?? "").replace(/,/g, "")) || 0);   // 문자열로 온다("1,376" — 쉼표 빼야 0 이 안 된다). 오름은 상한 포함
     }
     if (out.KOSPI || out.KOSDAQ) await save("updown", out);
   });
