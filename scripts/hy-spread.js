@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 const DATA_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "data");
 const OUT = path.join(DATA_DIR, "hy-spread.json");
 const SERIES = "BAMLH0A0HYM2";
-const KEEP_DAYS = 800;   // 약 2년 — 1년 그래프 + 여유
+const KEEP_DAYS = 1900;   // 약 5년 — 5년 그래프(사용자 2026-11-12). ⚠️ FRED 의 ICE BofA 시리즈는 라이선스로 최근 몇 년만 줄 수 있다 — 주는 만큼
 
 async function main() {
   const start = new Date(Date.now() - KEEP_DAYS * 86400_000).toISOString().slice(0, 10);
