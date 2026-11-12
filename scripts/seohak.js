@@ -101,7 +101,7 @@ async function tossMeta(cache) {
     try {
       const resp = await fetch("https://wts-info-api.tossinvest.com/api/v3/search-all/wts-auto-complete", {
         method: "POST",
-        headers: { "Content-Type": "application/json", "User-Agent": UA, "Cookie": "_browserId=seohak0crawler; deviceId=WTS-seohak0crawler" },
+        headers: { "Content-Type": "application/json", "User-Agent": UA, "Cookie": "_browserId=seohak0crawler; deviceId=WTS-seohak0crawler; BTK=seohak0crawler" },
         body: JSON.stringify({ query: c.t, sections: [{ type: "PRODUCT", option: { addIntegratedSearchResult: true } }] }),
       });
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);

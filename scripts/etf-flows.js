@@ -16,7 +16,7 @@ import { fileURLToPath } from "node:url";
 // 토스 wts-info-api 는 2026-10-29 18시부터 _browserId + deviceId 쿠키 둘 다 없으면 400 — 실행마다 무작위(live.js 와 같은 처리).
 //   이게 빠져 10/29~11/4 일일 수집이 400 재시도로 시간을 다 쓰고 취소됐다(수익률·수급·구성 7일 정체).
 const TOSS_RID = Array.from({ length: 32 }, () => "abcdefghijklmnopqrstuvwxyz0123456789"[Math.floor(Math.random() * 36)]).join("");
-const TOSS_COOKIE = `_browserId=${TOSS_RID}; deviceId=WTS-${TOSS_RID}`;
+const TOSS_COOKIE = `_browserId=${TOSS_RID}; deviceId=WTS-${TOSS_RID}; BTK=${TOSS_RID}`;
 
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));

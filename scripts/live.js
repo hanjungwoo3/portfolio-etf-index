@@ -24,6 +24,7 @@ const FORCE = process.env.FORCE === "1";   // 수동 실행 — 장 시간과 �
 // 토스는 _browserId 쿠키가 없으면 400(2026-10-22~, portfolio-web local-proxy 와 같은 처리) — 실행마다 무작위 32자
 const TOSS_BROWSER_ID = Array.from({ length: 32 }, () => Math.floor(Math.random() * 16).toString(16)).join("");
 // 2026-10-29 18:00 경부터 `deviceId=WTS-<32자>` 쿠키도 같이 있어야 200(둘 중 하나만이면 400, 실측) — 값은 아무거나
+// 2026-11-12 저녁부터 `BTK=<아무 값>` 쿠키도 있어야 200(없으면 400 invalid-client-state, 실측 — 값은 검사하지 않는다)
 const TOSS_DEVICE_ID = Array.from({ length: 32 }, () => Math.floor(Math.random() * 16).toString(16)).join("");
 
 const kstYmd = (ms = Date.now()) => new Date(ms + 9 * 3600_000).toISOString().slice(0, 10);
@@ -140,7 +141,7 @@ async function etfRanking() {
   for (let i = 0; i < codes.length; i += 200) {   // 토스 상한 200종/콜
     const chunk = codes.slice(i, i + 200);
     const r = await req(`https://wts-info-api.tossinvest.com/api/v3/stock-prices/details?productCodes=${chunk.map(c => `A${c}`).join(",")}`,
-      { headers: { Referer: "https://tossinvest.com/", Origin: "https://tossinvest.com", Cookie: `_browserId=${TOSS_BROWSER_ID}; deviceId=WTS-${TOSS_DEVICE_ID}` } });
+      { headers: { Referer: "https://tossinvest.com/", Origin: "https://tossinvest.com", Cookie: `_browserId=${TOSS_BROWSER_ID}; deviceId=WTS-${TOSS_DEVICE_ID}; BTK=${TOSS_BROWSER_ID}` } });
     const j = await r.json();
     for (const it of j.result ?? []) {
       if (!it.code || !(it.close > 0)) continue;
