@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 const DATA_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "data");
 const OUT = path.join(DATA_DIR, "us-short-volume.json");
 // 볼 종목 — 반도체(미국) 탭 + 반도체 대표. 늘리려면 여기에(웹 쪽 목록과 따로)
-const TICKERS = ["MU", "NVDA", "TSM", "ANT", "AVGO", "AMD", "SNDK", "WDC", "INTC", "QCOM", "ARM", "AMAT", "LRCX", "ASML", "SOXX", "SMH", "SOXL", "SOXS"];
+const TICKERS = ["MU", "NVDA", "SKHY", "ANT", "TSM", "AVGO", "AMD", "SNDK", "WDC", "INTC", "QCOM", "ARM", "AMAT", "LRCX", "ASML", "SOXX", "SMH", "SOXL", "SOXS"];
 const KEEP = 70;        // 영업일 약 3달
 const LOOKBACK = 100;   // 달력일 — 이 안의 평일 중 없는 날만 받는다
 
